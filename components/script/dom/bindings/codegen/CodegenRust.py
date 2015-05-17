@@ -818,7 +818,7 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
         if treatNullAs not in treatAs:
             raise TypeError("We don't support [TreatNullAs=%s]" % treatNullAs)
         if type.nullable():
-            nullBehavior = "()"
+            nullBehavior = "StringificationBehavior::Default"
         else:
             nullBehavior = treatAs[treatNullAs]
 
@@ -1032,7 +1032,17 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
     if not type.isPrimitive():
         raise TypeError("Need conversion for argument type '%s'" % str(type))
 
-    assert not isEnforceRange and not isClamp
+
+    if type.isInteger():
+        if isEnforceRange:
+            conversionBehavior = "ConversionBehavior::EnforceRange"
+        elif isClamp:
+            conversionBehavior = "ConversionBehavior::Clamp"
+        else:
+            conversionBehavior = "ConversionBehavior::Default"
+    else:
+        assert not isEnforceRange and not isClamp
+        conversionBehavior = "()"
 
     if failureCode is None:
         failureCode = 'return 0'
@@ -1041,12 +1051,11 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
     if type.nullable():
         declType = CGWrapper(declType, pre="Option<", post=">")
 
-    #XXXjdm support conversionBehavior here
     template = (
-        "match FromJSValConvertible::from_jsval(cx, ${val}, ()) {\n"
+        "match FromJSValConvertible::from_jsval(cx, ${val}, %s) {\n"
         "    Ok(v) => v,\n"
         "    Err(_) => { %s }\n"
-        "}" % exceptionCode)
+        "}" % (conversionBehavior, exceptionCode))
 
     if defaultValue is not None:
         if isinstance(defaultValue, IDLNullValue):
@@ -1936,6 +1945,7 @@ def UnionTypes(descriptors, dictionaries, callbacks, config):
         'dom::bindings::codegen::PrototypeList',
         'dom::bindings::conversions::FromJSValConvertible',
         'dom::bindings::conversions::ToJSValConvertible',
+        'dom::bindings::conversions::ConversionBehavior',
         'dom::bindings::conversions::native_from_handlevalue',
         'dom::bindings::conversions::StringificationBehavior',
         'dom::bindings::error::throw_not_in_union',
@@ -5043,7 +5053,7 @@ class CGBindingRoot(CGThing):
             'dom::bindings::callback::{CallbackContainer,CallbackInterface,CallbackFunction}',
             'dom::bindings::callback::{CallSetup,ExceptionHandling}',
             'dom::bindings::callback::wrap_call_this_object',
-            'dom::bindings::conversions::{FromJSValConvertible, ToJSValConvertible}',
+            'dom::bindings::conversions::{FromJSValConvertible, ToJSValConvertible, ConversionBehavior}',
             'dom::bindings::conversions::{native_from_reflector, native_from_handlevalue, native_from_handleobject}',
             'dom::bindings::conversions::DOM_OBJECT_SLOT',
             'dom::bindings::conversions::IDLInterface',
