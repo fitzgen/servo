@@ -23,6 +23,10 @@
 //! originating `Root<T>`.
 //!
 
+extern crate guarded_array;
+
+use self::guarded_array::GuardedArray;
+
 use core::nonzero::NonZero;
 use dom::bindings::conversions::DerivedFrom;
 use dom::bindings::inheritance::Castable;
@@ -444,7 +448,7 @@ impl<'root, T: RootedReference<'root> + 'root> RootedReference<'root> for Option
 /// See also [*Exact Stack Rooting - Storing a GCPointer on the CStack*]
 /// (https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/Internals/GC/Exact_Stack_Rooting).
 pub struct RootCollection {
-    roots: UnsafeCell<Vec<*const Reflector>>,
+    roots: UnsafeCell<GuardedArray<*const Reflector>>,
 }
 
 /// A pointer to a RootCollection, for use in global variables.
@@ -452,6 +456,7 @@ pub struct RootCollectionPtr(pub *const RootCollection);
 
 impl Copy for RootCollectionPtr {}
 impl Clone for RootCollectionPtr {
+    #[inline]
     fn clone(&self) -> RootCollectionPtr {
         *self
     }
@@ -459,14 +464,16 @@ impl Clone for RootCollectionPtr {
 
 impl RootCollection {
     /// Create an empty collection of roots
+    #[inline]
     pub fn new() -> RootCollection {
         debug_assert!(thread_state::get().is_script());
         RootCollection {
-            roots: UnsafeCell::new(vec![]),
+            roots: UnsafeCell::new(GuardedArray::with_capacity(8192).expect("TODO FITZGEN")),
         }
     }
 
     /// Start tracking a stack-based root
+    #[inline]
     unsafe fn root(&self, untracked_reflector: *const Reflector) {
         debug_assert!(thread_state::get().is_script());
         let mut roots = &mut *self.roots.get();
@@ -475,6 +482,7 @@ impl RootCollection {
     }
 
     /// Stop tracking a stack-based reflector, asserting if it isn't found.
+    #[inline]
     unsafe fn unroot(&self, tracked_reflector: *const Reflector) {
         assert!(!tracked_reflector.is_null());
         assert!(!(*tracked_reflector).get_jsobject().is_null());
@@ -495,7 +503,7 @@ pub unsafe fn trace_roots(tracer: *mut JSTracer) {
     STACK_ROOTS.with(|ref collection| {
         let RootCollectionPtr(collection) = collection.get().unwrap();
         let collection = &*(*collection).roots.get();
-        for root in collection {
+        for root in collection.iter() {
             trace_reflector(tracer, "on stack", &**root);
         }
     });
@@ -517,6 +525,7 @@ pub struct Root<T: DomObject> {
 
 impl<T: Castable> Root<T> {
     /// Cast a DOM object root upwards to one of the interfaces it derives from.
+    #[inline]
     pub fn upcast<U>(root: Root<T>) -> Root<U>
         where U: Castable,
               T: DerivedFrom<U>
@@ -525,6 +534,7 @@ impl<T: Castable> Root<T> {
     }
 
     /// Cast a DOM object root downwards to one of the interfaces it might implement.
+    #[inline]
     pub fn downcast<U>(root: Root<T>) -> Option<Root<U>>
         where U: DerivedFrom<T>
     {
@@ -540,6 +550,7 @@ impl<T: DomObject> Root<T> {
     /// Create a new stack-bounded root for the provided JS-owned value.
     /// It cannot outlive its associated `RootCollection`, and it gives
     /// out references which cannot outlive this new `Root`.
+    #[inline]
     pub fn new(unrooted: NonZero<*const T>) -> Root<T> {
         debug_assert!(thread_state::get().is_script());
         STACK_ROOTS.with(|ref collection| {
@@ -553,6 +564,7 @@ impl<T: DomObject> Root<T> {
     }
 
     /// Generate a new root from a reference
+    #[inline]
     pub fn from_ref(unrooted: &T) -> Root<T> {
         Root::new(unsafe { NonZero::new(unrooted) })
     }
@@ -560,6 +572,7 @@ impl<T: DomObject> Root<T> {
 
 impl<'root, T: DomObject + 'root> RootedReference<'root> for Root<T> {
     type Ref = &'root T;
+    #[inline]
     fn r(&'root self) -> &'root T {
         self
     }
@@ -567,6 +580,7 @@ impl<'root, T: DomObject + 'root> RootedReference<'root> for Root<T> {
 
 impl<T: DomObject> Deref for Root<T> {
     type Target = T;
+    #[inline]
     fn deref(&self) -> &T {
         debug_assert!(thread_state::get().is_script());
         unsafe { &*self.ptr.get() }
@@ -586,12 +600,14 @@ impl<T: DomObject> PartialEq for Root<T> {
 }
 
 impl<T: DomObject> Clone for Root<T> {
+    #[inline]
     fn clone(&self) -> Root<T> {
         Root::from_ref(&*self)
     }
 }
 
 impl<T: DomObject> Drop for Root<T> {
+    #[inline]
     fn drop(&mut self) {
         unsafe {
             (*self.root_list).unroot(self.reflector());

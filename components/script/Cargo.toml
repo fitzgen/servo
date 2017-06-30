@@ -24,6 +24,7 @@ serde_json = "1.0"
 tinyfiledialogs = "2.5.9"
 
 [dependencies]
+guarded_array = { path = "/home/fitzgen/guarded_array" }
 angle = {git = "https://github.com/servo/angle", branch = "servo"}
 app_units = "0.5"
 audio-video-metadata = "0.1.2"
